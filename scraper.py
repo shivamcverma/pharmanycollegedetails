@@ -10,6 +10,8 @@ import json
 import re
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
+
 
 # ---------------- URLS ----------------
 BASE_URL =[
@@ -882,47 +884,62 @@ def scrape_review_summary(driver,URLS):
 
 
 # ---------------- REVIEWS ----------------
-def scrape_reviews(driver,URLS):
+def scrape_reviews(driver, URLS, max_retries=3):
     reviews = []
 
-    driver.get(URLS["reviews"])
-    wait = WebDriverWait(driver, 15)
+    for attempt in range(max_retries):
+        try:
+            driver.set_page_load_timeout(60)  # max 60 seconds per page load
+            driver.get(URLS.get("reviews", ""))
+            wait = WebDriverWait(driver, 15)
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.paper-card")))
+            break  # successful load
+        except (TimeoutException, WebDriverException) as e:
+            print(f"Attempt {attempt+1} failed for {URLS.get('reviews')}: {e}")
+            if attempt == max_retries - 1:
+                print("Skipping this URL due to repeated failures")
+                return reviews  # return empty list if page fails
 
-    wait.until(EC.presence_of_element_located(
-        (By.CSS_SELECTOR, "div.paper-card"))
-    )
+    try:
+        # Scroll page to load lazy-loaded reviews
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
 
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(2)
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(2)
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        cards = soup.select("div.paper-card")
 
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    cards = soup.select("div.paper-card")
+        for card in cards:
+            title = card.select_one("div._1298")
+            detail_block = card.select_one("div.cf9e.false")
 
-    for card in cards:
-        title = card.select_one("div._1298")
-        detail_block = card.select_one("div.cf9e.false")
+            if not title or not detail_block:
+                continue
 
-        if not title or not detail_block:
-            continue
+            review = {
+                "reviewer_name": (card.select_one("span._1bfc").get_text(strip=True)
+                                  if card.select_one("span._1bfc") else ""),
+                "course": (card.select_one("div._4efe a").get_text(strip=True)
+                           if card.select_one("div._4efe a") else ""),
+                "overall_rating": (card.select_one("div._304d span").get_text(strip=True)
+                                   if card.select_one("div._304d span") else ""),
+                "review_title": title.get_text(strip=True),
+                "review_date": (card.select_one("span._4dae").get_text(strip=True)
+                                if card.select_one("span._4dae") else ""),
+                "detailed_review": {}
+            }
 
-        review = {
-            "reviewer_name": (card.select_one("span._1bfc") or "").get_text(strip=True) if card.select_one("span._1bfc") else "",
-            "course": (card.select_one("div._4efe a") or "").get_text(strip=True) if card.select_one("div._4efe a") else "",
-            "overall_rating": (card.select_one("div._304d span") or "").get_text(strip=True) if card.select_one("div._304d span") else "",
-            "review_title": title.get_text(strip=True),
-            "review_date": (card.select_one("span._4dae") or "").get_text(strip=True) if card.select_one("span._4dae") else "",
-            "detailed_review": {}
-        }
+            for sec in detail_block.find_all("div", recursive=False):
+                key = sec.find("strong")
+                val = sec.find("span")
+                if key and val:
+                    review["detailed_review"][key.get_text(strip=True).replace(":", "")] = val.get_text(strip=True)
 
-        for sec in detail_block.find_all("div", recursive=False):
-            key = sec.find("strong")
-            val = sec.find("span")
-            if key and val:
-                review["detailed_review"][key.get_text(strip=True).replace(":", "")] = val.get_text(strip=True)
+            reviews.append(review)
 
-        reviews.append(review)
+    except Exception as e:
+        print(f"Error parsing reviews for {URLS.get('reviews')}: {e}")
 
     return reviews
 
