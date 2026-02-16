@@ -8660,11 +8660,29 @@ def parse_faculty_reviews(driver,URLS):
         driver.get(URLS["faculty"])
     wait = WebDriverWait(driver, 15)
 
-    section = wait.until(
-        EC.presence_of_element_located(
-            (By.XPATH, "//h2[contains(text(),'Faculty Reviews')]/ancestor::section")
-        )
-    )
+    section_patterns = [
+        "//h2[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'faculty')]/ancestor::section",
+        "//h2[contains(., 'Faculty')]/ancestor::section",
+        "//h2[contains(., 'faculty')]/ancestor::section",
+        "//div[contains(@class, 'faculty')]",
+        "//section[.//*[contains(., 'Faculty')]]",
+        "//div[@id='faculty-reviews']",
+        "//div[contains(@id, 'faculty')]"
+    ]
+    
+    section = None
+    for pattern in section_patterns:
+        try:
+            section = wait.until(
+                EC.presence_of_element_located((By.XPATH, pattern))
+            )
+            print(f"Found section with pattern: {pattern}")
+            break
+        except:
+            continue
+    if not section:
+        print("Faculty section not found on this page")
+        return []
 
     driver.execute_script(
         "arguments[0].scrollIntoView({block:'center'});", section
